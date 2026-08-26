@@ -1,6 +1,6 @@
 import os
-import re
-from flask import Flask, render_template, request, jsonify, Response, redirect
+import sys
+from flask import Flask, render_template, request, jsonify
 import yt_dlp
 
 app = Flask(__name__)
@@ -24,10 +24,11 @@ def format_duration(seconds):
     return f"{m:02d}:{s:02d}"
 
 def get_ytdl_options():
+    # Bypass Web Botguard on Cloud Servers by targeting Embedded & VR clients
     return {
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web']
+                'player_client': ['web_embedded', 'android_vr', 'tv_embedded', 'mweb']
             }
         },
         'quiet': True,
@@ -60,7 +61,6 @@ def extract():
                 return jsonify({"success": False, "error": "Could not extract video metadata."}), 400
 
             formats = info.get('formats', [])
-            
             video_formats = []
             audio_formats = []
             seen_formats = set()
@@ -78,7 +78,11 @@ def extract():
                 fps = f.get('fps')
                 abr = f.get('abr')
 
-                # Audio Only
+                # Skip internal storyboard/thumbnail formats
+                if ext == 'mhtml' or (format_id and str(format_id).startswith('sb')):
+                    continue
+
+                # Audio Streams
                 if vcodec == 'none' and acodec != 'none':
                     key = f"audio_{ext}_{abr}"
                     if key not in seen_formats:
@@ -92,7 +96,7 @@ def extract():
                             'type': 'audio'
                         })
 
-                # Video (Combined or Video-only)
+                # Video Streams
                 elif vcodec != 'none':
                     is_progressive = acodec != 'none'
                     res_label = f"{height}p" if height else f.get('resolution', 'Unknown')
@@ -115,10 +119,9 @@ def extract():
 
             # Sort video formats by highest resolution first
             video_formats.sort(key=lambda x: (x.get('height', 0), x.get('has_audio', False)), reverse=True)
-            # Sort audio formats by quality
             audio_formats.reverse()
 
-            result = {
+            return jsonify({
                 'success': True,
                 'title': info.get('title'),
                 'uploader': info.get('uploader'),
@@ -128,9 +131,7 @@ def extract():
                 'views': f"{info.get('view_count', 0):,}" if info.get('view_count') else "N/A",
                 'video_formats': video_formats,
                 'audio_formats': audio_formats
-            }
-
-            return jsonify(result)
+            })
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
