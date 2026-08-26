@@ -3,146 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Client-Side YT Stream Fetcher</title>
+  <title>YouTube High-Speed HD Video & Audio Downloader</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .glass-card { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+  </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center p-4">
-
-  <div class="max-w-2xl w-full my-8 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
-    <div class="flex items-center gap-3 mb-6">
-      <div class="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center text-white">
-        <i class="fa-solid fa-bolt"></i>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-start p-4 selection:bg-red-500 selection:text-white">
+  <!-- Header / Nav -->
+  <header class="w-full max-w-4xl py-6 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600 to-rose-500 flex items-center justify-center shadow-lg shadow-red-600/30">
+        <i class="fa-solid fa-play text-white text-lg"></i>
       </div>
       <div>
-        <h1 class="text-xl font-bold">Direct Client Stream Hub</h1>
-        <p class="text-xs text-emerald-400">⚡ Runs on your device's network (Zero Bot Block)</p>
+        <h1 class="text-xl font-bold bg-gradient-to-r from-red-400 to-rose-200 bg-clip-text text-transparent">YT Stream Hub Pro</h1>
+        <p class="text-xs text-slate-400">High-Definition Video & Audio Format Engine</p>
       </div>
     </div>
-
-    <!-- Input Form -->
-    <div class="flex gap-2 mb-6">
-      <input 
-        type="url" 
-        id="ytUrl" 
-        placeholder="Paste YouTube Link (e.g. https://youtu.be/...)" 
-        class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500"
-      />
-      <button 
-        id="btnFetch" 
-        onclick="fetchClientSide()" 
-        class="bg-red-600 hover:bg-red-500 text-white font-medium px-6 py-3 rounded-xl text-sm transition"
-      >
-        Extract Link
-      </button>
-    </div>
-
-    <!-- Status / Loading -->
-    <div id="statusText" class="hidden text-center py-4 text-sm text-slate-400"></div>
-
-    <!-- Result Area -->
-    <div id="resultBox" class="hidden space-y-4">
-      <div class="flex gap-4 items-center bg-slate-950 p-4 rounded-xl border border-slate-800">
-        <img id="vidThumb" class="w-28 h-20 object-cover rounded-lg" src="" />
-        <div>
-          <h3 id="vidTitle" class="text-sm font-semibold text-slate-200 line-clamp-2"></h3>
-          <p id="vidAuthor" class="text-xs text-slate-500 mt-1"></p>
-        </div>
-      </div>
-
-      <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mt-4">Download Streams (Direct from Google CDN)</h4>
-      <div id="formatsList" class="space-y-2"></div>
-    </div>
-  </div>
-
-  <script>
-    function extractVideoId(url) {
-      const match = url.match(/(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})/);
-      return match ? match[1] : null;
-    }
-
-    async function fetchClientSide() {
-      const input = document.getElementById('ytUrl').value.trim();
-      const videoId = extractVideoId(input);
-      const status = document.getElementById('statusText');
-      const resultBox = document.getElementById('resultBox');
-      const formatsList = document.getElementById('formatsList');
-
-      if (!videoId) {
-        alert('Please enter a valid YouTube URL');
-        return;
-      }
-
-      resultBox.classList.add('hidden');
-      status.classList.remove('hidden');
-      status.innerHTML = '<i class="fa-solid fa-spinner animate-spin mr-2"></i> Connecting directly from your device IP to YouTube...';
-
-      try {
-        // Step 1: User ke browser se YouTube OEmbed details fetch karna
-        const oembedRes = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
-        const oembed = await oembedRes.json();
-
-        document.getElementById('vidThumb').src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-        document.getElementById('vidTitle').textContent = oembed.title || 'YouTube Video';
-        document.getElementById('vidAuthor').textContent = oembed.author_name || 'YouTube Creator';
-
-        // Step 2: Client-side Stream Link Resolution
-        // User ke browser se direct direct CDN playback request bheji jaati hai
-        const streamEndpoint = `https://api.invidious.io/api/v1/videos/${videoId}`;
-        
-        let streams = [];
-        try {
-          const res = await fetch(`https://inv.tux.pizza/api/v1/videos/${videoId}`, { cache: 'no-store' });
-          if (res.ok) {
-            const data = await res.json();
-            streams = data.formatStreams || [];
-          }
-        } catch (e) {
-          console.warn('Fallback triggered');
-        }
-
-        formatsList.innerHTML = '';
-
-        if (streams.length > 0) {
-          streams.forEach(s => {
-            const row = document.createElement('div');
-            row.className = 'flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl';
-            row.innerHTML = `
-              <div class="flex items-center gap-2">
-                <span class="px-2 py-1 bg-red-600/20 text-red-400 font-bold text-xs rounded">${s.resolution || 'HD'}</span>
-                <span class="text-xs text-slate-300">${s.container || 'mp4'} (Video + Audio)</span>
-              </div>
-              <a href="${s.url}" target="_blank" download class="bg-red-600 hover:bg-red-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition">
-                <i class="fa-solid fa-download mr-1"></i> Download
-              </a>
-            `;
-            formatsList.appendChild(row);
-          });
-        } else {
-          // Direct Webview Fallback link
-          const row = document.createElement('div');
-          row.className = 'p-3 bg-slate-950 border border-slate-800 rounded-xl flex justify-between items-center';
-          row.innerHTML = `
-            <span class="text-xs text-slate-300">Direct Playback Stream</span>
-            <a href="https://www.youtube.com/embed/${videoId}?autoplay=1" target="_blank" class="bg-emerald-600 text-white text-xs font-semibold px-4 py-2 rounded-lg">
-              Open Stream
-            </a>
-          `;
-          formatsList.appendChild(row);
-        }
-
-        status.classList.add('hidden');
-        resultBox.classList.remove('hidden');
-
-        // Step 3: Kaam hone ke baad memory clean karna (Auto-purge)
-        setTimeout(() => {
-          streams = null; // Memory clear
-        }, 1000);
-
-      } catch (err) {
-        status.innerHTML = `<span class="text-red-400">Failed to connect: ${err.message}</span>`;
-      }
-    }
-  </script>
-</body>
-</html>
+    <span class="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-full flex items-center gap-1.5">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      Ready
