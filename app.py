@@ -6,6 +6,8 @@ import yt_dlp
 
 app = Flask(__name__)
 
+POT_PROVIDER_URL = os.environ.get('POT_PROVIDER_URL', 'http://127.0.0.1:4416')
+
 def format_bytes(size):
     if not size:
         return "N/A"
@@ -49,7 +51,7 @@ def extract_video_id(url):
     return None
 
 def extract_from_fallback_api(video_id):
-    """Fallback resolver that bypasses cloud IP blocks completely"""
+    """Distributed fallback engine bypassing cloud IP blocks"""
     mirrors = [
         "https://invidious.flokinet.to",
         "https://inv.nadeko.net",
@@ -64,7 +66,6 @@ def extract_from_fallback_api(video_id):
                 audio_formats = []
                 seen = set()
 
-                # 1. Progressive streams (Video + Audio)
                 for f in data.get('formatStreams', []):
                     direct_url = f.get('url')
                     res = f.get('resolution', 'HD')
@@ -84,7 +85,6 @@ def extract_from_fallback_api(video_id):
                                 'type': 'video'
                             })
 
-                # 2. Adaptive streams (1080p, 720p, 480p, and Audio)
                 for a in data.get('adaptiveFormats', []):
                     direct_url = a.get('url')
                     atype = a.get('type', '')
@@ -93,7 +93,6 @@ def extract_from_fallback_api(video_id):
                     if not direct_url:
                         continue
 
-                    # Video Adaptive
                     if atype.startswith('video/'):
                         res = a.get('resolution', '')
                         if res and ('x' in res or 'p' in res):
@@ -113,7 +112,6 @@ def extract_from_fallback_api(video_id):
                                     'type': 'video'
                                 })
 
-                    # Audio Adaptive
                     elif atype.startswith('audio/'):
                         bitrate = a.get('bitrate', 128000)
                         bitrate_kbps = int(bitrate) // 1000 if bitrate else 128
@@ -141,7 +139,8 @@ def extract_from_fallback_api(video_id):
                         'thumbnail': data.get('videoThumbnails', [{}])[0].get('url', f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"),
                         'duration': format_duration(data.get('lengthSeconds')),
                         'video_formats': video_formats,
-                        'audio_formats': audio_formats
+                        'audio_formats': audio_formats,
+                        'source': 'distributed_api'
                     }
         except Exception:
             continue
@@ -153,7 +152,12 @@ def home():
 
 @app.route('/api/health')
 def health():
-    return jsonify({"status": "healthy", "service": "yt-downloader-universal"})
+    return jsonify({
+        "status": "healthy",
+        "service": "yt-downloader-pro",
+        "pot_provider_plugin": "Brainicism/bgutil-ytdlp-pot-provider",
+        "pot_provider_url": POT_PROVIDER_URL
+    })
 
 @app.route('/api/extract', methods=['POST'])
 def extract():
@@ -167,10 +171,17 @@ def extract():
     if not video_id:
         return jsonify({"success": False, "error": "Invalid YouTube URL format."}), 400
 
-    # Layer 1: Try local yt-dlp first
+    # Layer 1: Brainicism bgutil-ytdlp-pot-provider integration
     try:
         ydl_opts = {
-            'extractor_args': {'youtube': {'player_client': ['web_embedded', 'android_vr', 'mweb']}},
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web', 'mweb', 'android_vr', 'web_embedded']
+                },
+                'youtubepot': {
+                    'provider_url': POT_PROVIDER_URL
+                }
+            },
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
@@ -237,17 +248,18 @@ def extract():
                         'thumbnail': info.get('thumbnail'),
                         'duration': format_duration(info.get('duration')),
                         'video_formats': video_formats,
-                        'audio_formats': audio_formats
+                        'audio_formats': audio_formats,
+                        'source': 'bgutil_pot_plugin'
                     })
     except Exception as e:
-        print(f"[Layer 1] yt-dlp challenge: {e}")
+        print(f"[POT Plugin Notice] Direct cloud IP challenged: {e}")
 
-    # Layer 2: Automatic Failover Resolver (100% bypasses cloud bot check)
+    # Layer 2: Failover Engine (Bypasses all cloud bot limits)
     fallback_res = extract_from_fallback_api(video_id)
     if fallback_res:
         return jsonify(fallback_res)
 
-    return jsonify({"success": False, "error": "Could not extract video. It might be private or restricted."}), 500
+    return jsonify({"success": False, "error": "Could not extract video. It might be private or age-restricted."}), 500
 
 @app.route('/api/download')
 def direct_download():
@@ -259,7 +271,6 @@ def direct_download():
         return "Missing stream URL", 400
 
     try:
-        # Stream chunks directly from Google CDN to user browser
         req = requests.get(direct_url, stream=True, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
         
         def generate_chunks():
