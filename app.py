@@ -32,7 +32,7 @@ def get_ytdl_options():
     return {
         'extractor_args': {
             'youtube': {
-                'player_client': ['web_embedded', 'android_vr', 'mweb']
+                'player_client': ['web_embedded', 'android_vr', 'mweb', 'web']
             }
         },
         'quiet': True,
@@ -82,7 +82,7 @@ def extract():
                 fps = f.get('fps')
                 abr = f.get('abr')
 
-                # Skip storyboard images / non-streams
+                # Skip storyboard images
                 if ext == 'mhtml' or (format_id and str(format_id).startswith('sb')) or not direct_url:
                     continue
 
@@ -180,7 +180,7 @@ def direct_download():
             filename = f"{title}.{ext}"
 
             # Stream direct binary chunks from Google CDN to user browser
-            # Result: Zero redirects, zero popups, instant native browser download
+            # Zero redirects, zero ads, instant native file download
             req = requests.get(stream_url, stream=True, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
             
             def generate_chunks():
