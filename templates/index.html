@@ -14,6 +14,7 @@
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-start p-4 selection:bg-red-500 selection:text-white">
 
+  <!-- Header -->
   <header class="w-full max-w-4xl py-6 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600 to-rose-500 flex items-center justify-center shadow-lg shadow-red-600/30">
@@ -30,7 +31,10 @@
     </span>
   </header>
 
+  <!-- Main Container -->
   <main class="w-full max-w-4xl space-y-6">
+    
+    <!-- Input Box -->
     <div class="glass-card rounded-2xl p-6 shadow-2xl">
       <h2 class="text-base font-semibold text-slate-200 mb-1">Enter YouTube Link</h2>
       <p class="text-xs text-slate-400 mb-4">Paste any YouTube URL to extract direct high-speed downloadable video & audio streams.</p>
@@ -63,13 +67,17 @@
       </div>
     </div>
 
+    <!-- Loading Indicator -->
     <div id="loading" class="hidden glass-card rounded-2xl p-10 text-center space-y-3">
       <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-slate-700 border-t-red-500"></div>
       <p class="text-sm font-medium text-slate-300">Extracting Direct Google CDN Streams...</p>
       <p class="text-xs text-slate-500">Resolving clean video & audio streams</p>
     </div>
 
+    <!-- Video Result Section -->
     <div id="results" class="hidden space-y-6">
+      
+      <!-- Video Metadata Header Card -->
       <div class="glass-card rounded-2xl p-6 flex flex-col md:flex-row gap-6 items-start">
         <div class="w-full md:w-64 aspect-video rounded-xl overflow-hidden bg-slate-900 relative flex-shrink-0 shadow-lg border border-slate-800">
           <img id="resThumb" src="" alt="Thumbnail" class="w-full h-full object-cover" />
@@ -82,6 +90,7 @@
             <span id="resChannel" class="text-slate-300 font-medium"></span>
           </div>
 
+          <!-- Format Category Tabs -->
           <div class="flex gap-2 pt-2">
             <button id="tabVideo" onclick="switchTab('video')" class="px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg transition shadow-md shadow-red-600/20">
               <i class="fa-solid fa-video mr-1.5"></i> Video Formats (<span id="videoCount">0</span>)
@@ -93,15 +102,19 @@
         </div>
       </div>
 
+      <!-- Formats Container -->
       <div class="glass-card rounded-2xl p-6">
+        <!-- Video Formats Table -->
         <div id="videoFormats" class="space-y-3"></div>
+
+        <!-- Audio Formats Table -->
         <div id="audioFormats" class="hidden space-y-3"></div>
       </div>
     </div>
   </main>
 
   <script>
-    let currentVideoId = '';
+    let currentVideoTitle = '';
 
     function switchTab(type) {
       const tabVideo = document.getElementById('tabVideo');
@@ -153,7 +166,7 @@
           throw new Error(data.error || 'Failed to extract video formats.');
         }
 
-        currentVideoId = data.video_id;
+        currentVideoTitle = data.title || 'video';
 
         document.getElementById('resThumb').src = data.thumbnail;
         document.getElementById('resTitle').textContent = data.title;
@@ -162,11 +175,15 @@
         document.getElementById('videoCount').textContent = data.video_formats.length;
         document.getElementById('audioCount').textContent = data.audio_formats.length;
 
+        // Render Video Formats
         const videoContainer = document.getElementById('videoFormats');
         videoContainer.innerHTML = '';
         data.video_formats.forEach(v => {
           const card = document.createElement('div');
           card.className = 'flex items-center justify-between p-3.5 bg-slate-900/90 hover:bg-slate-900 border border-slate-800 rounded-xl transition';
+          
+          const downloadUrl = `/api/download?url=${encodeURIComponent(v.direct_url)}&title=${encodeURIComponent(currentVideoTitle)}&ext=${v.ext}`;
+
           card.innerHTML = `
             <div class="flex items-center gap-3">
               <span class="px-2.5 py-1 bg-purple-500/10 border border-purple-500/30 text-purple-400 font-bold text-xs rounded-lg">
@@ -177,7 +194,7 @@
                 <div class="text-[11px] text-slate-400">File Size: ${v.filesize}</div>
               </div>
             </div>
-            <a href="/api/download?id=${currentVideoId}&format_id=${v.format_id}&type=video" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 shadow-md shadow-red-600/20 active:scale-95">
+            <a href="${downloadUrl}" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 shadow-md shadow-red-600/20 active:scale-95">
               <i class="fa-solid fa-download"></i>
               <span>Save File</span>
             </a>
@@ -185,11 +202,15 @@
           videoContainer.appendChild(card);
         });
 
+        // Render Audio Formats
         const audioContainer = document.getElementById('audioFormats');
         audioContainer.innerHTML = '';
         data.audio_formats.forEach(a => {
           const card = document.createElement('div');
           card.className = 'flex items-center justify-between p-3.5 bg-slate-900/90 hover:bg-slate-900 border border-slate-800 rounded-xl transition';
+          
+          const downloadUrl = `/api/download?url=${encodeURIComponent(a.direct_url)}&title=${encodeURIComponent(currentVideoTitle)}&ext=${a.ext}`;
+
           card.innerHTML = `
             <div class="flex items-center gap-3">
               <span class="px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold text-xs rounded-lg">
@@ -200,7 +221,7 @@
                 <div class="text-[11px] text-slate-400">File Size: ${a.filesize}</div>
               </div>
             </div>
-            <a href="/api/download?id=${currentVideoId}&format_id=${a.format_id}&type=audio" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 shadow-md shadow-amber-600/20 active:scale-95">
+            <a href="${downloadUrl}" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 shadow-md shadow-amber-600/20 active:scale-95">
               <i class="fa-solid fa-music"></i>
               <span>Save Audio</span>
             </a>
@@ -209,7 +230,7 @@
         });
 
         results.classList.remove('hidden');
-
+ 
       } catch (err) {
         errorText.textContent = err.message;
         errorMsg.classList.remove('hidden');
@@ -220,4 +241,4 @@
     }
   </script>
 </body>
-</html>
+</html> 
