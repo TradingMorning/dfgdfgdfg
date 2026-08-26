@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YT Video Stream & Format Downloader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600 to-rose-500 flex items-center justify-center shadow-lg shadow-red-500/20">
+          <i class="fa-solid fa-play text-white text-lg"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-400 to-rose-200">
+            YT Stream Hub
+          </h1>
+          <p class="text-xs text-slate-400">Android Innertube Engine (No Bot Block)</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+          Online
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 max-w-4xl w-full mx-auto px-4 py-8">
+    <!-- Input Section -->
+    <div class="glass rounded-2xl p-6 shadow-2xl mb-8">
+      <h2 class="text-lg font-semibold mb-2 text-slate-200">Enter YouTube Video URL</h2>
+      <p class="text-sm text-slate-400 mb-4">Paste any YouTube video or shorts link to fetch all high-definition formats.</p>
+      
+      <form id="fetchForm" class="flex flex-col sm:flex-row gap-3">
+        <div class="relative flex-1">
+          <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+            <i class="fa-solid fa-link"></i>
+          </div>
+          <input 
+            type="url" 
+            id="videoUrl" 
+            placeholder="https://www.youtube.com/watch?v=..." 
+            required
+            class="w-full pl-10 pr-10 py-3 bg-slate-900/90 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition text-sm"
+          />
+        </div>
+        <button 
+          type="submit" 
+          id="fetchBtn"
+          class="px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-medium rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-red-600/30 active:scale-95"
+        >
+          <span>Fetch Formats</span>
+          <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </form>
+
+      <!-- Alert Box -->
+      <div id="errorAlert" class="hidden mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-start gap-3">
+        <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
+        <span id="errorMessage"></span>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading" class="hidden glass rounded-2xl p-12 text-center my-8">
+      <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-slate-700 border-t-red-500 mb-4"></div>
+      <p class="text-slate-300 font-medium">Bypassing Bot Verification & Extracting Streams...</p>
+      <p class="text-xs text-slate-500 mt-1">Simulating Android Innertube client handshake</p>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results" class="hidden space-y-6">
+      
+      <!-- Video Details Card -->
+      <div class="glass rounded-2xl p-6 flex flex-col md:flex-row gap-6 items-start">
+        <div class="w-full md:w-64 aspect-video rounded-xl overflow-hidden bg-slate-900 relative flex-shrink-0">
+          <img id="resThumb" src="" alt="Thumbnail" class="w-full h-full object-cover" />
+          <span id="resDuration" class="absolute bottom-2 right-2 bg-black/80 px-2 py-0.5 rounded text-xs font-mono font-medium text-white"></span>
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 id="resTitle" class="text-lg font-bold text-slate-100 line-clamp-2 mb-2"></h3>
+          <div class="flex flex-wrap gap-4 text-xs text-slate-400 mb-4">
+            <span class="flex items-center gap-1.5">
+              <i class="fa-solid fa-user text-slate-500"></i>
+              <span id="resUploader" class="text-slate-300"></span>
+            </span>
+            <span class="flex items-center gap-1.5">
+              <i class="fa-solid fa-eye text-slate-500"></i>
+              <span id="resViews" class="text-slate-300"></span> views
+            </span>
+          </div>
+          <div class="inline-flex rounded-lg bg-slate-900/80 p-1 border border-slate-800">
+            <button id="tabVideo" class="px-4 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white transition">
+              <i class="fa-solid fa-video mr-1.5"></i> Video Formats (<span id="videoCount">0</span>)
+            </button>
+            <button id="tabAudio" class="px-4 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 transition">
+              <i class="fa-solid fa-music mr-1.5"></i> Audio Only (<span id="audioCount">0</span>)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Formats List Container -->
+      <div class="glass rounded-2xl p-6">
+        <!-- Video Formats Table -->
+        <div id="videoFormatsList" class="space-y-2"></div>
+        <!-- Audio Formats Table -->
+        <div id="audioFormatsList" class="hidden space-y-2"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800/80 py-6 text-center text-xs text-slate-500">
+    <p>Engineered for high-reliability production servers & local testing.</p>
+  </footer>
+
+  <script>
+    const fetchForm = document.getElementById('fetchForm');
+    const videoUrl = document.getElementById('videoUrl');
+    const fetchBtn = document.getElementById('fetchBtn');
+    const loading = document.getElementById('loading');
+    const results = document.getElementById('results');
+    const errorAlert = document.getElementById('errorAlert');
+    const errorMessage = document.getElementById('errorMessage');
+
+    const tabVideo = document.getElementById('tabVideo');
+    const tabAudio = document.getElementById('tabAudio');
+    const videoFormatsList = document.getElementById('videoFormatsList');
+    const audioFormatsList = document.getElementById('audioFormatsList');
+
+    tabVideo.addEventListener('click', () => {
+      tabVideo.className = 'px-4 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white transition';
+      tabAudio.className = 'px-4 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 transition';
+      videoFormatsList.classList.remove('hidden');
+      audioFormatsList.classList.add('hidden');
+    });
+
+    tabAudio.addEventListener('click', () => {
+      tabAudio.className = 'px-4 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white transition';
+      tabVideo.className = 'px-4 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 transition';
+      audioFormatsList.classList.remove('hidden');
+      videoFormatsList.classList.add('hidden');
+    });
+
+    fetchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = videoUrl.value.trim();
+      if (!url) return;
+
+      errorAlert.classList.add('hidden');
+      results.classList.add('hidden');
+      loading.classList.remove('hidden');
+      fetchBtn.disabled = true;
+
+      try {
+        const response = await fetch('/api/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to extract video information.');
+        }
+
+        renderResults(data);
+      } catch (err) {
+        errorMessage.textContent = err.message;
+        errorAlert.classList.remove('hidden');
+      } finally {
+        loading.classList.add('hidden');
+        fetchBtn.disabled = false;
+      }
+    });
+
+    function renderResults(data) {
+      document.getElementById('resThumb').src = data.thumbnail;
+      document.getElementById('resTitle').textContent = data.title;
+      document.getElementById('resUploader').textContent = data.uploader;
+      document.getElementById('resViews').textContent = data.views;
+      document.getElementById('resDuration').textContent = data.duration;
+      document.getElementById('videoCount').textContent = data.video_formats.length;
+      document.getElementById('audioCount').textContent = data.audio_formats.length;
+
+      // Render Video Formats
+      videoFormatsList.innerHTML = '';
+      if (data.video_formats.length === 0) {
+        videoFormatsList.innerHTML = '<p class="text-slate-400 text-sm py-4 text-center">No video formats found.</p>';
+      } else {
+        data.video_formats.forEach(f => {
+          const item = document.createElement('div');
+          item.className = 'flex items-center justify-between p-3.5 bg-slate-900/60 hover:bg-slate-900 border border-slate-800/80 rounded-xl transition';
+          item.innerHTML = `
+            <div class="flex items-center gap-3">
+              <span class="px-2.5 py-1 bg-slate-800 text-red-400 font-bold text-xs rounded-lg border border-slate-700">
+                ${f.resolution}
+              </span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">${f.ext.toUpperCase()} ${f.has_audio ? '<span class="text-xs text-emerald-400 ml-1 font-normal">(Video + Audio)</span>' : '<span class="text-xs text-amber-400 ml-1 font-normal">(Video Only)</span>'}</div>
+                <div class="text-xs text-slate-500">Size: ${f.filesize} • Format ID: ${f.format_id}</div>
+              </div>
+            </div>
+            <a href="${f.download_url}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-1.5 bg-slate-800 hover:bg-red-600 text-slate-200 hover:text-white text-xs font-semibold rounded-lg border border-slate-700 hover:border-red-500 transition flex items-center gap-1.5">
+              <i class="fa-solid fa-download"></i>
+              <span>Download / Stream</span>
+            </a>
+          `;
+          videoFormatsList.appendChild(item);
+        });
+      }
+
+      // Render Audio Formats
+      audioFormatsList.innerHTML = '';
+      if (data.audio_formats.length === 0) {
+        audioFormatsList.innerHTML = '<p class="text-slate-400 text-sm py-4 text-center">No audio formats found.</p>';
+      } else {
+        data.audio_formats.forEach(f => {
+          const item = document.createElement('div');
+          item.className = 'flex items-center justify-between p-3.5 bg-slate-900/60 hover:bg-slate-900 border border-slate-800/80 rounded-xl transition';
+          item.innerHTML = `
+            <div class="flex items-center gap-3">
+              <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 font-bold text-xs rounded-lg border border-slate-700">
+                ${f.ext.toUpperCase()}
+              </span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">Quality: ${f.quality}</div>
+                <div class="text-xs text-slate-500">Size: ${f.filesize} • Format ID: ${f.format_id}</div>
+              </div>
+            </div>
+            <a href="${f.download_url}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-200 hover:text-white text-xs font-semibold rounded-lg border border-slate-700 hover:border-emerald-500 transition flex items-center gap-1.5">
+              <i class="fa-solid fa-music"></i>
+              <span>Download Audio</span>
+            </a>
+          `;
+          audioFormatsList.appendChild(item);
+        });
+      }
+
+      results.classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
