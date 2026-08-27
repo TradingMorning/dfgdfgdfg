@@ -6,35 +6,24 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="StreamVault - yt-dlp Engine", version="16.0.0")
+app = FastAPI(title="StreamVault Engine", version="17.0.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
 COOKIES_SRC = "cookies.txt"
 COOKIES_WRITABLE = "/tmp/cookies.txt"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+USER_AGENT = "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)"
 
 
-def inspect_and_get_cookie_file():
-    """Cookies ko inspect karta hai aur /tmp me copy karta hai."""
-    if not os.path.exists(COOKIES_SRC):
-        return None, "Missing cookies.txt", "amber"
-
-    try:
-        shutil.copy(COOKIES_SRC, COOKIES_WRITABLE)
-        with open(COOKIES_WRITABLE, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-
-        has_login = "LOGIN_INFO" in content or "SID" in content or "__Secure-3PAPISID" in content
-        valid_lines = len([l for l in content.splitlines() if l.strip() and not l.startswith("#")])
-
-        if has_login:
-            return COOKIES_WRITABLE, f"Active: Authenticated Account ({valid_lines} cookies)", "emerald"
-        else:
-            return COOKIES_WRITABLE, f"Warning: Guest/Logged-Out Cookies ({valid_lines} cookies - May get blocked)", "rose"
-    except Exception as e:
-        return COOKIES_SRC, f"Error reading cookies: {e}", "amber"
+def get_cookie_file():
+    if os.path.exists(COOKIES_SRC):
+        try:
+            shutil.copy(COOKIES_SRC, COOKIES_WRITABLE)
+            return COOKIES_WRITABLE
+        except Exception:
+            return COOKIES_SRC
+    return None
 
 
 def clean_url(url: str):
@@ -83,22 +72,22 @@ def format_duration(seconds):
 
 
 def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: str = ""):
-    cookie_path, _, _ = inspect_and_get_cookie_file()
+    cookie_path = get_cookie_file()
 
     opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'compat_opts': ['no-youtube-prefer-oauth'],
         'http_headers': {'User-Agent': USER_AGENT},
-        # mweb & web_creator bypass standard datacenter BotGuard checks with cookies
+        # iOS and Android clients bypass datacenter Web BotGuard checks
         'extractor_args': {
             'youtube': {
-                'player_client': ['mweb', 'web_creator', 'ios', 'tv_embedded']
+                'player_client': ['ios', 'android_creator', 'tv_embedded']
             }
         }
     }
 
+    # Pass cookies if available
     if cookie_path and os.path.exists(cookie_path):
         opts['cookiefile'] = cookie_path
 
@@ -108,11 +97,11 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
             format_str = "bestaudio/best"
             merge_fmt = "m4a"
         elif quality == "best":
-            format_str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+            format_str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
             merge_fmt = "mp4"
         else:
             height = quality.replace("p", "")
-            format_str = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={height}]+bestaudio/best"
+            format_str = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/best"
             merge_fmt = "mp4"
 
         opts.update({
@@ -131,10 +120,7 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def home_ui():
-    _, status_msg, color = inspect_and_get_cookie_file()
-    badge_style = f"bg-{color}-500/10 border-{color}-500/20 text-{color}-400"
-
-    return f"""
+    return """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -145,19 +131,19 @@ def home_ui():
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
-        body {{ font-family: 'Plus Jakarta Sans', sans-serif; }}
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
     </style>
 </head>
 <body class="bg-[#080c14] text-gray-100 min-h-screen flex flex-col items-center justify-start p-4 sm:p-8">
 
     <header class="w-full max-w-3xl text-center my-8">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full {badge_style} border text-xs font-semibold mb-3">
-            <i class="fa-solid fa-cookie-bite"></i> {status_msg}
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold mb-3">
+            <i class="fa-solid fa-mobile-screen"></i> iOS & Mobile Client Engine Active
         </div>
         <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-500">
             YouTube StreamVault
         </h1>
-        <p class="text-gray-400 mt-2 text-sm">Download 1080p, 720p, 360p & MP3 via yt-dlp</p>
+        <p class="text-gray-400 mt-2 text-sm">Download HD Video & Audio Streams</p>
     </header>
 
     <main class="w-full max-w-3xl space-y-6">
@@ -180,7 +166,7 @@ def home_ui():
 
         <div id="loader" class="hidden my-8 text-center">
             <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-500 border-t-transparent"></div>
-            <p class="text-gray-400 text-xs mt-2">Extracting video metadata...</p>
+            <p class="text-gray-400 text-xs mt-2">Extracting video streams via mobile client...</p>
         </div>
 
         <div id="errorAlert" class="hidden p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"></div>
@@ -200,7 +186,7 @@ def home_ui():
                         </div>
                     </div>
                     <div class="mt-6">
-                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">Available Download Formats:</label>
+                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">Download Streams:</label>
                         <div id="qualityButtons" class="flex flex-wrap gap-2"></div>
                     </div>
                 </div>
@@ -208,7 +194,7 @@ def home_ui():
             
             <div id="downloadNotice" class="hidden mt-4 p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-center gap-2">
                 <i class="fa-solid fa-arrow-down animate-bounce"></i>
-                <span>Server is preparing download...</span>
+                <span>Server is processing file download...</span>
             </div>
         </div>
     </main>
@@ -216,7 +202,7 @@ def home_ui():
     <script>
         let currentUrl = "";
 
-        async function fetchDetails() {{
+        async function fetchDetails() {
             const urlInput = document.getElementById("videoUrl").value.trim();
             const loader = document.getElementById("loader");
             const detailsCard = document.getElementById("detailsCard");
@@ -231,13 +217,13 @@ def home_ui():
             fetchBtn.disabled = true;
             currentUrl = urlInput;
 
-            try {{
-                const response = await fetch(`/api/info?url=${{encodeURIComponent(urlInput)}}`);
+            try {
+                const response = await fetch(`/api/info?url=${encodeURIComponent(urlInput)}`);
                 const result = await response.json();
 
-                if (!response.ok || result.status !== "success") {{
+                if (!response.ok || result.status !== "success") {
                     throw new Error(result.detail || "Unable to extract video details.");
-                }}
+                }
 
                 document.getElementById("videoTitle").innerText = result.data.title;
                 document.getElementById("videoThumb").src = result.data.thumbnail;
@@ -250,39 +236,39 @@ def home_ui():
 
                 addDownloadBtn(qContainer, "Best Quality (Auto MP4)", "best", "fa-star text-yellow-400", true);
 
-                result.data.available_resolutions.forEach(res => {{
+                result.data.available_resolutions.forEach(res => {
                     addDownloadBtn(qContainer, res, res, "fa-video text-indigo-400", false);
-                }});
+                });
 
                 addDownloadBtn(qContainer, "Audio Only (M4A)", "audio", "fa-music text-pink-400", false);
 
                 detailsCard.classList.remove("hidden");
 
-            }} catch (err) {{
+            } catch (err) {
                 errorAlert.innerText = err.message;
                 errorAlert.classList.remove("hidden");
-            }} finally {{
+            } finally {
                 loader.classList.add("hidden");
                 fetchBtn.disabled = false;
-            }}
-        }}
+            }
+        }
 
-        function addDownloadBtn(container, label, qualityKey, iconClass, isPrimary) {{
+        function addDownloadBtn(container, label, qualityKey, iconClass, isPrimary) {
             const a = document.createElement("a");
-            a.href = `/api/download?url=${{encodeURIComponent(currentUrl)}}&quality=${{qualityKey}}`;
+            a.href = `/api/download?url=${encodeURIComponent(currentUrl)}&quality=${qualityKey}`;
             a.className = isPrimary
                 ? "px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-md"
                 : "px-3.5 py-2 rounded-lg bg-[#1a2337] hover:bg-gray-800 border border-gray-700 text-xs font-medium text-gray-200 flex items-center gap-2 transition";
-            a.innerHTML = `<i class="fa-solid ${{iconClass}}"></i> ${{label}}`;
-            a.onclick = () => {{
+            a.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${label}`;
+            a.onclick = () => {
                 document.getElementById("downloadNotice").classList.remove("hidden");
-            }};
+            };
             container.appendChild(a);
-        }}
+        }
 
-        document.getElementById("videoUrl").addEventListener("keypress", (e) => {{
+        document.getElementById("videoUrl").addEventListener("keypress", (e) => {
             if (e.key === "Enter") fetchDetails();
-        }});
+        });
     </script>
 </body>
 </html>
@@ -343,7 +329,7 @@ def download_video(
 ):
     clean_target_url, video_id = clean_url(url)
     ydl_opts = get_base_ydl_opts(download=True, quality=quality, video_id=video_id)
- 
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(clean_target_url, download=True)
@@ -364,4 +350,4 @@ def download_video(
                 media_type="video/mp4" if extension == "mp4" else "audio/mp4"
             )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
