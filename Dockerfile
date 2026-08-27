@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-# Install ffmpeg for merging high resolution video and audio
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
@@ -8,7 +7,8 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y yt-dlp-youtube-oauth2 || true
 
 COPY . .
 
