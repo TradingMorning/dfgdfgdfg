@@ -2,83 +2,56 @@ import os
 import glob
 import re
 import json
+import urllib.request
+import urllib.error
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="YouTube Cloud Downloader", version="5.0.0")
+app = FastAPI(title="YouTube Downloader API", version="6.0.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
-TOKEN_FILE = "/tmp/yt_oauth_token.json"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 
-def clean_url(url: str):
+def extract_video_id(url: str) -> str:
     url = url.strip()
-    match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?\s]{11})', url)
+    match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|shorts\/)([^#\&\?\s]{11})', url)
     if match:
-        return f"https://www.youtube.com/watch?v={match.group(1)}", match.group(1)
-    return url, url
+        return match.group(1)
+    raise ValueError("Invalid YouTube URL format.")
 
 
 def format_views(views):
     if not views:
         return "N/A"
-    if views >= 1_000_000:
-        return f"{views / 1_000_000:.1f}M views"
-    if views >= 1_000:
-        return f"{views / 1_000:.1f}K views"
-    return f"{views:,} views"
+    try:
+        views = int(views)
+        if views >= 1_000_000:
+            return f"{views / 1_000_000:.1f}M views"
+        if views >= 1_000:
+            return f"{views / 1_000:.1f}K views"
+        return f"{views:,} views"
+    except Exception:
+        return str(views)
 
 
 def format_duration(seconds):
     if not seconds:
         return "00:00"
-    m, s = divmod(seconds, 60)
-    h, m = divmod(m, 60)
-    if h > 0:
-        return f"{h:d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
-
-
-def get_ydl_options(download: bool = False, quality: str = "best", video_id: str = ""):
-    opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'noplaylist': True,
-        # Force OAuth2 device login minted for this server's IP
-        'username': 'oauth2',
-        'password': '',
-        'cachedir': '/tmp/yt_cache',
-        'extractor_args': {
-            'youtubetab': ['skip=authcheck'],
-            'youtube': {
-                'player_client': ['tv', 'web', 'android']
-            }
-        }
-    }
-
-    if download:
-        outtmpl_format = os.path.join(DOWNLOADS_DIR, "%(id)s_%(resolution)s.%(ext)s")
-        if quality == "best":
-            format_str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
-        else:
-            height = quality.replace("p", "")
-            format_str = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={height}]+bestaudio/best"
-        
-        opts.update({
-            'format': format_str,
-            'outtmpl': outtmpl_format,
-            'merge_output_format': 'mp4'
-        })
-    else:
-        opts['skip_download'] = True
-
-    return opts
+    try:
+        seconds = int(seconds)
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h:d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+    except Exception:
+        return "00:00"
 
 
 # ==========================================
-# 1. UI INTERFACE
+# 1. FRONTEND UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def home_ui():
@@ -88,7 +61,7 @@ def home_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StreamVault Cloud Downloader</title>
+    <title>StreamVault - YouTube Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
@@ -96,13 +69,13 @@ def home_ui():
         body { font-family: 'Plus Jakarta Sans', sans-serif; }
     </style>
 </head>
-<body class="bg-[#0b0f19] text-gray-100 min-h-screen flex flex-col items-center justify-start p-4 sm:p-8">
+<body class="bg-[#0a0e17] text-gray-100 min-h-screen flex flex-col items-center justify-start p-4 sm:p-8">
 
     <header class="w-full max-w-3xl text-center my-8">
         <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-500">
-            StreamVault Server Engine
+            YouTube StreamVault
         </h1>
-        <p class="text-gray-400 mt-2 text-sm">Server-Authenticated YouTube Stream Extractor</p>
+        <p class="text-gray-400 mt-2 text-sm">Direct YouTube Extraction Engine</p>
     </header>
 
     <main class="w-full max-w-3xl space-y-6">
@@ -111,7 +84,7 @@ def home_ui():
                 type="text" 
                 id="videoUrl" 
                 placeholder="Paste YouTube Video URL here..."
-                class="w-full bg-[#0b0f19] text-white px-4 py-3.5 rounded-xl border border-gray-800 focus:outline-none focus:border-indigo-500 text-sm"
+                class="w-full bg-[#0a0e17] text-white px-4 py-3.5 rounded-xl border border-gray-800 focus:outline-none focus:border-indigo-500 text-sm"
             />
             <button 
                 onclick="fetchDetails()" 
@@ -125,14 +98,14 @@ def home_ui():
 
         <div id="loader" class="hidden my-8 text-center">
             <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-500 border-t-transparent"></div>
-            <p class="text-gray-400 text-xs mt-2">Processing request through server session...</p>
+            <p class="text-gray-400 text-xs mt-2">Extracting video streams...</p>
         </div>
 
         <div id="errorAlert" class="hidden p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"></div>
 
         <div id="detailsCard" class="hidden bg-[#131927] p-6 rounded-2xl border border-gray-800">
             <div class="flex flex-col md:flex-row gap-6">
-                <div class="relative rounded-xl overflow-hidden md:w-5/12 flex-shrink-0">
+                <div class="relative rounded-xl overflow-hidden md:w-5/12 flex-shrink-0 bg-black/50">
                     <img id="videoThumb" src="" alt="Thumbnail" class="w-full h-full object-cover rounded-xl" />
                     <span id="videoDuration" class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 text-xs font-semibold rounded text-white font-mono"></span>
                 </div>
@@ -145,7 +118,7 @@ def home_ui():
                         </div>
                     </div>
                     <div class="mt-6">
-                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">Download Options:</label>
+                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">Download Streams:</label>
                         <div id="qualityButtons" class="flex flex-wrap gap-2"></div>
                     </div>
                 </div>
@@ -173,31 +146,35 @@ def home_ui():
                 const result = await response.json();
 
                 if (!response.ok || result.status !== "success") {
-                    throw new Error(result.detail || "Failed to process video.");
+                    throw new Error(result.detail || "Failed to extract video details.");
                 }
 
-                document.getElementById("videoTitle").innerText = result.title;
-                document.getElementById("videoThumb").src = result.thumbnail;
-                document.getElementById("videoUploader").innerText = result.uploader;
-                document.getElementById("videoViews").innerText = result.views_formatted;
-                document.getElementById("videoDuration").innerText = result.duration_formatted;
+                document.getElementById("videoTitle").innerText = result.data.title;
+                document.getElementById("videoThumb").src = result.data.thumbnail;
+                document.getElementById("videoUploader").innerText = result.data.uploader;
+                document.getElementById("videoViews").innerText = result.data.views_formatted;
+                document.getElementById("videoDuration").innerText = result.data.duration_formatted;
 
                 const qContainer = document.getElementById("qualityButtons");
                 qContainer.innerHTML = "";
 
-                const bestBtn = document.createElement("a");
-                bestBtn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=best`;
-                bestBtn.className = "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white";
-                bestBtn.innerText = "Download Best MP4";
-                qContainer.appendChild(bestBtn);
-
-                result.available_resolutions.forEach(res => {
+                if (result.data.formats && result.data.formats.length > 0) {
+                    result.data.formats.forEach(f => {
+                        const a = document.createElement("a");
+                        a.href = f.url;
+                        a.target = "_blank";
+                        a.rel = "noreferrer";
+                        a.className = "px-3.5 py-2 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500 text-xs font-medium text-white flex items-center gap-2";
+                        a.innerHTML = `<i class="fa-solid fa-download"></i> ${f.label}`;
+                        qContainer.appendChild(a);
+                    });
+                } else {
                     const btn = document.createElement("a");
-                    btn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=${res}`;
-                    btn.className = "px-3.5 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200";
-                    btn.innerText = res;
+                    btn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=best`;
+                    btn.className = "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white";
+                    btn.innerText = "Download Best (MP4)";
                     qContainer.appendChild(btn);
-                });
+                }
 
                 detailsCard.classList.remove("hidden");
 
@@ -216,44 +193,89 @@ def home_ui():
 
 
 # ==========================================
-# 2. METADATA API
+# 2. METADATA EXTRACTION
 # ==========================================
 @app.get("/api/info")
 def get_video_info(url: str = Query(..., description="YouTube video URL")):
-    clean_target_url, video_id = clean_url(url)
-    ydl_opts = get_ydl_options(download=False, video_id=video_id)
+    try:
+        video_id = extract_video_id(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 1. Primary Method: YouTube oEmbed + InnerTube Web Embedded
+    video_title = "YouTube Video"
+    uploader = "YouTube Creator"
+    thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        req = urllib.request.Request(oembed_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            if resp.status == 200:
+                oembed_data = json.loads(resp.read().decode('utf-8'))
+                video_title = oembed_data.get("title", video_title)
+                uploader = oembed_data.get("author_name", uploader)
+                thumbnail = oembed_data.get("thumbnail_url", thumbnail)
+    except Exception:
+        pass
+
+    # 2. Extract Streams using Embedded Innertube Clients
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['web_embedded', 'tv_embedded', 'android_embedded']
+            }
+        }
+    }
+
+    formats_list = []
+    duration = 0
+    views = 0
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(clean_target_url, download=False)
-            
-            formats = info.get('formats', [])
-            resolutions = set()
-            for f in formats:
-                if f.get('height') and f.get('height') >= 360:
-                    resolutions.add(f"{f.get('height')}p")
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            video_title = info.get("title", video_title)
+            uploader = info.get("uploader", uploader)
+            duration = info.get("duration", 0)
+            views = info.get("view_count", 0)
+            thumbnail = info.get("thumbnail", thumbnail)
 
-            sorted_resolutions = sorted(
-                list(resolutions),
-                key=lambda x: int(x.replace('p', '')) if x.replace('p', '').isdigit() else 0,
-                reverse=True
-            )
+            for f in info.get("formats", []):
+                if f.get("url") and f.get("vcodec") != "none" and f.get("acodec") != "none":
+                    height = f.get("height", "HD")
+                    formats_list.append({
+                        "label": f"{height}p (MP4)",
+                        "url": f.get("url")
+                    })
+    except Exception:
+        pass
 
-            return JSONResponse(content={
-                "status": "success",
-                "id": video_id,
-                "title": info.get("title"),
-                "uploader": info.get("uploader"),
-                "duration_seconds": info.get("duration"),
-                "duration_formatted": format_duration(info.get("duration")),
-                "thumbnail": info.get("thumbnail"),
-                "views": info.get("view_count"),
-                "views_formatted": format_views(info.get("view_count")),
-                "available_resolutions": sorted_resolutions
-            })
+    # Direct streams fallback if yt-dlp gets throttled
+    if not formats_list:
+        formats_list = [
+            {"label": "720p HD Stream", "url": f"https://inv.tux.pizza/latest_version?id={video_id}&itag=22"},
+            {"label": "360p Medium Stream", "url": f"https://inv.tux.pizza/latest_version?id={video_id}&itag=18"},
+            {"label": "Audio Only (M4A)", "url": f"https://inv.tux.pizza/latest_version?id={video_id}&itag=140"}
+        ]
 
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return JSONResponse(content={
+        "status": "success",
+        "data": {
+            "id": video_id,
+            "title": video_title,
+            "uploader": uploader,
+            "duration_seconds": duration,
+            "duration_formatted": format_duration(duration),
+            "thumbnail": thumbnail,
+            "views": views,
+            "views_formatted": format_views(views),
+            "formats": formats_list[:4]
+        }
+    })
 
 
 # ==========================================
@@ -265,13 +287,29 @@ def download_video(
     url: str = Query(..., description="YouTube video URL"),
     quality: str = Query("best")
 ):
-    clean_target_url, video_id = clean_url(url)
-    ydl_opts = get_ydl_options(download=True, quality=quality, video_id=video_id)
+    try:
+        video_id = extract_video_id(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    outtmpl_format = os.path.join(DOWNLOADS_DIR, f"{video_id}.%(ext)s")
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': outtmpl_format,
+        'merge_output_format': 'mp4',
+        'noplaylist': True,
+        'quiet': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['web_embedded', 'tv_embedded', 'android_embedded']
+            }
+        }
+    }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(clean_target_url, download=True)
-            matched_files = glob.glob(os.path.join(DOWNLOADS_DIR, f"{video_id}_*"))
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+            matched_files = glob.glob(os.path.join(DOWNLOADS_DIR, f"{video_id}.*"))
             if not matched_files:
                 raise HTTPException(status_code=500, detail="Downloaded media file not found.")
 
