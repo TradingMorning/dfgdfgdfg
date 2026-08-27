@@ -8,16 +8,15 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="StreamVault - Live Diagnostic Engine", version="3.6.0")
+app = FastAPI(title="StreamVault - Universal YouTube Engine", version="4.0.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
 COOKIES_FILE = "/tmp/cookies.txt"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
-# ==========================================
-# COOKIE VALIDATION & REPAIR ENGINE
-# ==========================================
+
 def inspect_and_write_cookies() -> dict:
     raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
     
@@ -31,7 +30,6 @@ def inspect_and_write_cookies() -> dict:
     if not raw_cookies:
         return {"loaded": False, "reason": "No YOUTUBE_COOKIES found in Environment", "lines": 0}
 
-    # Render escaped newlines ko real linebreaks me convert karna
     raw_cookies = raw_cookies.replace("\\n", "\n").replace("\\t", "\t")
     lines = [line.strip() for line in raw_cookies.splitlines() if line.strip()]
     
@@ -52,12 +50,11 @@ def inspect_and_write_cookies() -> dict:
         with open(COOKIES_FILE, "w", encoding="utf-8") as f:
             f.write(fixed_cookie_data)
     except Exception as e:
-        return {"loaded": False, "reason": f"Failed to write cookie file: {str(e)}", "lines": 0}
+        return {"loaded": False, "reason": f"Write failed: {str(e)}", "lines": 0}
 
     return {
         "loaded": True,
         "path": COOKIES_FILE,
-        "total_lines": len(lines),
         "valid_cookies": valid_cookie_count,
         "file_size": len(fixed_cookie_data)
     }
@@ -92,7 +89,7 @@ def format_duration(seconds):
 
 
 # ==========================================
-# 1. LIVE DEBUGGING UI (FRONTEND)
+# 1. LIVE DEBUGGING UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def home_ui():
@@ -162,7 +159,7 @@ def home_ui():
                 <span id="logStatusBadge" class="text-gray-500 font-mono">READY</span>
             </div>
             <div id="terminalLogs" class="font-mono text-xs text-gray-300 mt-3 h-44 overflow-y-auto space-y-1.5 custom-scroll p-2 bg-[#0a0e17] rounded-xl border border-gray-900">
-                <p class="text-gray-600">// Waiting for URL input... Events will stream here in real-time.</p>
+                <p class="text-gray-600">// Ready. Enter video URL to start diagnostics...</p>
             </div>
         </div>
 
@@ -226,7 +223,7 @@ def home_ui():
             badge.className = "text-amber-400 font-mono animate-pulse";
             fetchBtn.disabled = true;
 
-            addLog(`Received request for: <span class="text-white">${urlInput}</span>`);
+            addLog(`Analyzing request for: <span class="text-white">${urlInput}</span>`);
 
             try {
                 const response = await fetch(`/api/info?url=${encodeURIComponent(urlInput)}`);
@@ -239,7 +236,7 @@ def home_ui():
                 if (!response.ok || result.status !== "success") {
                     badge.innerText = "FAILED";
                     badge.className = "text-rose-400 font-mono";
-                    addLog(result.detail || "Execution failed.", "error");
+                    addLog(result.detail || "All extractors failed.", "error");
                     return;
                 }
 
@@ -255,27 +252,37 @@ def home_ui():
                 const qContainer = document.getElementById("qualityButtons");
                 qContainer.innerHTML = "";
 
-                // Best Quality Button
-                const bestBtn = document.createElement("a");
-                bestBtn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=best`;
-                bestBtn.className = "px-3.5 py-2 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 border border-indigo-500 text-xs font-semibold flex items-center gap-2 text-white transition";
-                bestBtn.innerHTML = `<i class="fa-solid fa-star text-yellow-400"></i> Best Quality (Auto MP4)`;
-                qContainer.appendChild(bestBtn);
+                if (result.data.direct_links && result.data.direct_links.length > 0) {
+                    result.data.direct_links.forEach(item => {
+                        const a = document.createElement("a");
+                        a.href = item.url;
+                        a.target = "_blank";
+                        a.className = "px-3.5 py-2 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 border border-indigo-500 text-xs font-semibold flex items-center gap-2 text-white transition";
+                        a.innerHTML = `<i class="fa-solid fa-download text-yellow-400"></i> ${item.label}`;
+                        qContainer.appendChild(a);
+                    });
+                } else {
+                    const bestBtn = document.createElement("a");
+                    bestBtn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=best`;
+                    bestBtn.className = "px-3.5 py-2 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 border border-indigo-500 text-xs font-semibold flex items-center gap-2 text-white transition";
+                    bestBtn.innerHTML = `<i class="fa-solid fa-star text-yellow-400"></i> Best Quality (Auto MP4)`;
+                    qContainer.appendChild(bestBtn);
 
-                result.data.available_resolutions.forEach(res => {
-                    const btn = document.createElement("a");
-                    btn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=${res}`;
-                    btn.className = "px-3.5 py-2 rounded-lg bg-[#182032] hover:bg-gray-800 border border-gray-700 text-xs font-medium flex items-center gap-2 text-gray-200 transition";
-                    btn.innerHTML = `<i class="fa-solid fa-video text-indigo-400"></i> ${res}`;
-                    qContainer.appendChild(btn);
-                });
+                    result.data.available_resolutions.forEach(res => {
+                        const btn = document.createElement("a");
+                        btn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=${res}`;
+                        btn.className = "px-3.5 py-2 rounded-lg bg-[#182032] hover:bg-gray-800 border border-gray-700 text-xs font-medium flex items-center gap-2 text-gray-200 transition";
+                        btn.innerHTML = `<i class="fa-solid fa-video text-indigo-400"></i> ${res}`;
+                        qContainer.appendChild(btn);
+                    });
+                }
 
                 detailsCard.classList.remove("hidden");
 
             } catch (err) {
-                badge.innerText = "NETWORK ERROR";
+                badge.innerText = "ERROR";
                 badge.className = "text-rose-400 font-mono";
-                addLog(`Network Exception: ${err.message}`, "error");
+                addLog(`Exception: ${err.message}`, "error");
             } finally {
                 fetchBtn.disabled = false;
             }
@@ -291,35 +298,36 @@ def home_ui():
 
 
 # ==========================================
-# 2. DIAGNOSTIC API WITH LIVE LOGS
+# 2. METADATA API WITH SMART FALLBACK
 # ==========================================
 @app.get("/api/info")
 def get_video_info(url: str = Query(..., description="YouTube video URL")):
     logs = []
     
     clean_target_url, video_id = clean_url(url)
-    logs.append({"type": "info", "message": f"Cleaned Video ID: <b>{video_id}</b>"})
+    logs.append({"type": "info", "message": f"Target Video ID: <b>{video_id}</b>"})
 
-    # Cookie Verification
     cookie_stats = inspect_and_write_cookies()
     if cookie_stats["loaded"]:
         logs.append({
             "type": "cookie", 
-            "message": f"Cookie loaded: <b>{cookie_stats['valid_cookies']} valid entries</b> parsed ({cookie_stats['file_size']} bytes)."
+            "message": f"Loaded <b>{cookie_stats['valid_cookies']} cookies</b>. Applying to Web Clients with Chrome User-Agent."
         })
     else:
         logs.append({
             "type": "warn", 
-            "message": f"Cookie status: {cookie_stats['reason']} (Attempting unauthenticated request)."
+            "message": "No cookies detected. Using unauthenticated multi-client pool."
         })
 
+    # Strategy 1: yt-dlp with Web & Web_Creator clients (which support browser cookies)
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
+        'http_headers': {'User-Agent': USER_AGENT},
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'mweb', 'web_creator', 'tv_embedded']
+                'player_client': ['web', 'web_creator', 'mweb'] if cookie_stats["loaded"] else ['tv_embedded', 'ios', 'android']
             }
         }
     }
@@ -327,7 +335,7 @@ def get_video_info(url: str = Query(..., description="YouTube video URL")):
         ydl_opts['cookiefile'] = cookie_stats["path"]
 
     try:
-        logs.append({"type": "info", "message": "Querying YouTube API with multi-client engine..."})
+        logs.append({"type": "info", "message": "Trying extraction via yt-dlp..."})
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(clean_target_url, download=False)
             
@@ -343,7 +351,7 @@ def get_video_info(url: str = Query(..., description="YouTube video URL")):
                 reverse=True
             )
 
-            logs.append({"type": "success", "message": f"Metadata extracted: '{info.get('title')}'"})
+            logs.append({"type": "success", "message": f"yt-dlp extracted: '{info.get('title')}'"})
 
             return JSONResponse(content={
                 "status": "success",
@@ -357,53 +365,92 @@ def get_video_info(url: str = Query(..., description="YouTube video URL")):
                     "thumbnail": info.get("thumbnail"),
                     "views": info.get("view_count"),
                     "views_formatted": format_views(info.get("view_count")),
-                    "available_resolutions": sorted_resolutions
+                    "available_resolutions": sorted_resolutions,
+                    "direct_links": []
                 }
             })
 
     except Exception as yt_err:
-        err_msg = str(yt_err)
-        logs.append({"type": "error", "message": f"yt-dlp failed: {err_msg[:120]}..."})
-        logs.append({"type": "warn", "message": "Failing over to mirror resolvers..."})
-        
-        # Standard urllib fallback
-        resolvers = [
-            f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
-            f"https://inv.tux.pizza/api/v1/videos/{video_id}",
-            f"https://yt.artemislena.eu/api/v1/videos/{video_id}"
-        ]
-        
-        for r_url in resolvers:
-            try:
-                req = urllib.request.Request(r_url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=5.0) as response:
-                    if response.status == 200:
-                        data = json.loads(response.read().decode('utf-8'))
-                        logs.append({"type": "success", "message": "Mirror resolved stream details successfully!"})
+        err_str = str(yt_err)
+        logs.append({"type": "error", "message": f"yt-dlp blocked on Render: {err_str[:90]}..."})
+        logs.append({"type": "warn", "message": "Switching to Cobalt API & Resolver Network..."})
+
+        # Strategy 2: Cobalt API (Bypasses YouTube BotGuard & Sign-in on Datacenter IPs)
+        try:
+            req_data = json.dumps({"url": clean_target_url}).encode('utf-8')
+            cobalt_req = urllib.request.Request(
+                "https://api.cobalt.tools/api/json",
+                data=req_data,
+                headers={
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'User-Agent': USER_AGENT
+                }
+            )
+            with urllib.request.urlopen(cobalt_req, timeout=7.0) as cb_resp:
+                if cb_resp.status == 200:
+                    cb_data = json.loads(cb_resp.read().decode('utf-8'))
+                    if cb_data.get("status") in ["stream", "redirect", "success"] and cb_data.get("url"):
+                        logs.append({"type": "success", "message": "Cobalt cloud bypass resolved direct stream!"})
                         return JSONResponse(content={
                             "status": "success",
                             "logs": logs,
                             "data": {
                                 "id": video_id,
-                                "title": data.get("title"),
-                                "uploader": data.get("author"),
-                                "duration_seconds": data.get("lengthSeconds"),
-                                "duration_formatted": format_duration(data.get("lengthSeconds")),
+                                "title": "YouTube Video",
+                                "uploader": "YouTube Stream",
+                                "duration_seconds": 0,
+                                "duration_formatted": "HD Stream",
                                 "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
-                                "views": data.get("viewCount"),
-                                "views_formatted": format_views(data.get("viewCount")),
-                                "available_resolutions": ["1080p", "720p", "480p", "360p"]
+                                "views": 0,
+                                "views_formatted": "Ready",
+                                "available_resolutions": ["1080p HD"],
+                                "direct_links": [
+                                    {"label": "Download Full HD Video (MP4)", "url": cb_data.get("url")}
+                                ]
                             }
                         })
-            except Exception:
-                continue
+        except Exception:
+            logs.append({"type": "warn", "message": "Cobalt busy, trying Piped/Invidious nodes..."})
+
+        # Strategy 3: Piped API Fallback
+        try:
+            piped_req = urllib.request.Request(f"https://pipedapi.kavin.rocks/streams/{video_id}", headers={'User-Agent': USER_AGENT})
+            with urllib.request.urlopen(piped_req, timeout=6.0) as p_resp:
+                if p_resp.status == 200:
+                    p_data = json.loads(p_resp.read().decode('utf-8'))
+                    direct_links = []
+                    for st in p_data.get("videoStreams", []):
+                        if st.get("videoOnly") is False:
+                            direct_links.append({"label": f"Download {st.get('quality')}", "url": st.get("url")})
+                    
+                    if direct_links:
+                        logs.append({"type": "success", "message": "Piped Node resolved stream links!"})
+                        return JSONResponse(content={
+                            "status": "success",
+                            "logs": logs,
+                            "data": {
+                                "id": video_id,
+                                "title": p_data.get("title"),
+                                "uploader": p_data.get("uploader"),
+                                "duration_seconds": p_data.get("duration"),
+                                "duration_formatted": format_duration(p_data.get("duration")),
+                                "thumbnail": p_data.get("thumbnailUrl"),
+                                "views": p_data.get("views"),
+                                "views_formatted": format_views(p_data.get("views")),
+                                "available_resolutions": ["1080p", "720p", "360p"],
+                                "direct_links": direct_links[:4]
+                            }
+                        })
+        except Exception:
+            pass
 
         return JSONResponse(
             status_code=400,
             content={
                 "status": "error",
                 "logs": logs,
-                "detail": "Failed on both yt-dlp and mirror resolvers. Verify cookie or try another URL."
+                "detail": "Could not bypass bot protection. Please re-export cookies from YouTube and update YOUTUBE_COOKIES."
             }
         )
 
@@ -434,9 +481,10 @@ def download_video(
         'merge_output_format': 'mp4',
         'noplaylist': True,
         'quiet': True,
+        'http_headers': {'User-Agent': USER_AGENT},
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'mweb', 'web_creator', 'tv_embedded']
+                'player_client': ['web', 'web_creator', 'mweb'] if cookie_stats["loaded"] else ['tv_embedded', 'ios']
             }
         }
     }
