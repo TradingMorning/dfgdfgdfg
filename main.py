@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="StreamVault - yt-dlp Engine", version="15.0.0")
+app = FastAPI(title="StreamVault - yt-dlp Engine", version="16.0.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
 COOKIES_SRC = "cookies.txt"
@@ -16,16 +16,25 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
 
-def get_cookie_file():
-    """Read-only cookies.txt ko /tmp writable directory me copy karta hai."""
-    if os.path.exists(COOKIES_SRC):
-        try:
-            shutil.copy(COOKIES_SRC, COOKIES_WRITABLE)
-            return COOKIES_WRITABLE
-        except Exception as e:
-            print(f"[Cookie Warning] Failed to copy to /tmp: {e}")
-            return COOKIES_SRC
-    return None
+def inspect_and_get_cookie_file():
+    """Cookies ko inspect karta hai aur /tmp me copy karta hai."""
+    if not os.path.exists(COOKIES_SRC):
+        return None, "Missing cookies.txt", "amber"
+
+    try:
+        shutil.copy(COOKIES_SRC, COOKIES_WRITABLE)
+        with open(COOKIES_WRITABLE, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        has_login = "LOGIN_INFO" in content or "SID" in content or "__Secure-3PAPISID" in content
+        valid_lines = len([l for l in content.splitlines() if l.strip() and not l.startswith("#")])
+
+        if has_login:
+            return COOKIES_WRITABLE, f"Active: Authenticated Account ({valid_lines} cookies)", "emerald"
+        else:
+            return COOKIES_WRITABLE, f"Warning: Guest/Logged-Out Cookies ({valid_lines} cookies - May get blocked)", "rose"
+    except Exception as e:
+        return COOKIES_SRC, f"Error reading cookies: {e}", "amber"
 
 
 def clean_url(url: str):
@@ -74,21 +83,22 @@ def format_duration(seconds):
 
 
 def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: str = ""):
+    cookie_path, _, _ = inspect_and_get_cookie_file()
+
     opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
         'compat_opts': ['no-youtube-prefer-oauth'],
         'http_headers': {'User-Agent': USER_AGENT},
+        # mweb & web_creator bypass standard datacenter BotGuard checks with cookies
         'extractor_args': {
             'youtube': {
-                'player_client': ['web', 'web_creator', 'mweb']
+                'player_client': ['mweb', 'web_creator', 'ios', 'tv_embedded']
             }
         }
     }
 
-    # Writable cookies path
-    cookie_path = get_cookie_file()
     if cookie_path and os.path.exists(cookie_path):
         opts['cookiefile'] = cookie_path
 
@@ -121,9 +131,8 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def home_ui():
-    cookie_loaded = os.path.exists(COOKIES_SRC)
-    cookie_status = "Active (/tmp/cookies.txt ready)" if cookie_loaded else "Missing cookies.txt"
-    badge_color = "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" if cookie_loaded else "bg-amber-500/10 border-amber-500/20 text-amber-400"
+    _, status_msg, color = inspect_and_get_cookie_file()
+    badge_style = f"bg-{color}-500/10 border-{color}-500/20 text-{color}-400"
 
     return f"""
 <!DOCTYPE html>
@@ -142,8 +151,8 @@ def home_ui():
 <body class="bg-[#080c14] text-gray-100 min-h-screen flex flex-col items-center justify-start p-4 sm:p-8">
 
     <header class="w-full max-w-3xl text-center my-8">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full {badge_color} border text-xs font-semibold mb-3">
-            <i class="fa-solid fa-cookie-bite"></i> {cookie_status}
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full {badge_style} border text-xs font-semibold mb-3">
+            <i class="fa-solid fa-cookie-bite"></i> {status_msg}
         </div>
         <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-500">
             YouTube StreamVault
