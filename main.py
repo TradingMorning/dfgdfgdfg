@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="StreamVault - yt-dlp Cookies Engine", version="13.0.0")
+app = FastAPI(title="StreamVault - Clean yt-dlp Engine", version="14.0.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -14,7 +14,7 @@ COOKIE_FILE = "cookies.txt"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
 
-def clean_url(url: str) -> str:
+def clean_url(url: str):
     url = url.strip()
     match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|shorts\/)([^#\&\?\s]{11})', url)
     if match:
@@ -23,7 +23,6 @@ def clean_url(url: str) -> str:
 
 
 def cleanup_file(filepath: str):
-    """File serve hone ke baad delete karta hai taaki server storage full na ho."""
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
@@ -65,10 +64,17 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'http_headers': {'User-Agent': USER_AGENT}
+        # Disable any oauth plugins
+        'compat_opts': ['no-youtube-prefer-oauth'],
+        'http_headers': {'User-Agent': USER_AGENT},
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['web', 'web_creator', 'mweb']
+            }
+        }
     }
 
-    # Pass cookies.txt from root if present
+    # Pass cookies.txt from project root
     if os.path.exists(COOKIE_FILE):
         opts['cookiefile'] = COOKIE_FILE
 
@@ -122,12 +128,12 @@ def home_ui():
 
     <header class="w-full max-w-3xl text-center my-8">
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full {badge_color} border text-xs font-semibold mb-3">
-            <i class="fa-solid fa-cookie-bite"></i> Cookie Auth: {cookie_status}
+            <i class="fa-solid fa-cookie-bite"></i> {cookie_status}
         </div>
         <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-500">
             YouTube StreamVault
         </h1>
-        <p class="text-gray-400 mt-2 text-sm">Download 1080p, 720p, 360p & MP3 using official yt-dlp engine</p>
+        <p class="text-gray-400 mt-2 text-sm">Download 1080p, 720p, 360p & MP3 via yt-dlp</p>
     </header>
 
     <main class="w-full max-w-3xl space-y-6">
@@ -178,7 +184,7 @@ def home_ui():
             
             <div id="downloadNotice" class="hidden mt-4 p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-center gap-2">
                 <i class="fa-solid fa-arrow-down animate-bounce"></i>
-                <span>Server is processing and downloading your file. Please wait a few seconds...</span>
+                <span>Server is preparing download...</span>
             </div>
         </div>
     </main>
@@ -218,15 +224,12 @@ def home_ui():
                 const qContainer = document.getElementById("qualityButtons");
                 qContainer.innerHTML = "";
 
-                // Best Quality (Auto 1080p/4K)
                 addDownloadBtn(qContainer, "Best Quality (Auto MP4)", "best", "fa-star text-yellow-400", true);
 
-                // Specific resolutions
                 result.data.available_resolutions.forEach(res => {{
                     addDownloadBtn(qContainer, res, res, "fa-video text-indigo-400", false);
                 }});
 
-                // Audio Only
                 addDownloadBtn(qContainer, "Audio Only (M4A)", "audio", "fa-music text-pink-400", false);
 
                 detailsCard.classList.remove("hidden");
@@ -306,7 +309,7 @@ def get_video_info(url: str = Query(..., description="YouTube video URL")):
 
 
 # ==========================================
-# 3. DOWNLOAD & STREAM HANDLER
+# 3. DOWNLOAD HANDLER
 # ==========================================
 @app.get("/api/download")
 def download_video(
@@ -322,14 +325,13 @@ def download_video(
             info = ydl.extract_info(clean_target_url, download=True)
             matched_files = glob.glob(os.path.join(DOWNLOADS_DIR, f"{video_id}_*"))
             if not matched_files:
-                raise HTTPException(status_code=500, detail="Downloaded media file not found on server.")
+                raise HTTPException(status_code=500, detail="Downloaded media file not found.")
 
             downloaded_file = matched_files[0]
             extension = downloaded_file.split(".")[-1]
             raw_title = info.get("title", "video")
             safe_title = "".join(c for c in raw_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
 
-            # Automatically delete the temporary file after user download finishes
             background_tasks.add_task(cleanup_file, downloaded_file)
 
             return FileResponse(
