@@ -5,9 +5,17 @@ import urllib.error
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 
-app = FastAPI(title="StreamVault - Universal YouTube Engine", version="10.0.0")
+app = FastAPI(title="StreamVault - Universal YouTube Engine", version="11.0.0")
 
-# Active High-Speed Cobalt API Clusters
+# 1. Active Piped Nodes (Direct GoogleVideo CDN Stream URLs)
+PIPED_NODES = [
+    "https://pipedapi.kavin.rocks/streams/",
+    "https://piped-api.lunar.icu/streams/",
+    "https://api.piped.privacydev.net/streams/",
+    "https://pipedapi.tokhmi.xyz/streams/"
+]
+
+# 2. Active Cobalt Clusters
 COBALT_CLUSTERS = [
     "https://cobalt-api.kwiatekm.pl",
     "https://api.cobalt.tools",
@@ -24,22 +32,43 @@ def extract_video_id(url: str) -> str:
     raise ValueError("Invalid YouTube URL.")
 
 
-def format_views(views):
-    if not views:
-        return "N/A"
-    try:
-        views = int(views)
-        if views >= 1_000_000:
-            return f"{views / 1_000_000:.1f}M views"
-        if views >= 1_000:
-            return f"{views / 1_000:.1f}K views"
-        return f"{views:,} views"
-    except Exception:
-        return str(views)
+def resolve_stream_url(video_id: str, quality: str = "1080", is_audio: bool = False) -> str:
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
+    # Method 1: Direct GoogleVideo CDN Resolver via Piped Nodes
+    for p_node in PIPED_NODES:
+        try:
+            req = urllib.request.Request(
+                f"{p_node}{video_id}",
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            )
+            with urllib.request.urlopen(req, timeout=4.5) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    
+                    if is_audio:
+                        audio_streams = data.get("audioStreams", [])
+                        if audio_streams and audio_streams[0].get("url"):
+                            print(f"[Resolver Success] Resolved audio from Piped: {p_node}")
+                            return audio_streams[0]["url"]
+                    else:
+                        video_streams = data.get("videoStreams", [])
+                        # Try to match requested quality
+                        for st in video_streams:
+                            if st.get("videoOnly") is False and (quality in st.get("quality", "") or quality == "best"):
+                                print(f"[Resolver Success] Resolved {st.get('quality')} from Piped: {p_node}")
+                                return st["url"]
+                        
+                        # Fallback to any progressive combined stream
+                        for st in video_streams:
+                            if st.get("videoOnly") is False and st.get("url"):
+                                print(f"[Resolver Success] Resolved fallback stream from Piped: {p_node}")
+                                return st["url"]
+        except Exception as e:
+            print(f"[Piped Node Warning] {p_node} error: {e}")
+            continue
 
-def resolve_cobalt_download(video_url: str, quality: str = "1080", is_audio: bool = False) -> str:
-    """Queries Cobalt cluster instances to get a direct high-speed download link."""
+    # Method 2: Cobalt Cluster with required headers
     payload = {
         "url": video_url,
         "videoQuality": quality if not is_audio else "720",
@@ -56,17 +85,19 @@ def resolve_cobalt_download(video_url: str, quality: str = "1080", is_audio: boo
                 headers={
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                    'Origin': 'https://cobalt.tools',
+                    'Referer': 'https://cobalt.tools/'
                 }
             )
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode('utf-8'))
-                    if data.get("status") in ["stream", "redirect", "tunnel", "picker"] and data.get("url"):
-                        return data.get("url")
                     if data.get("url"):
-                        return data.get("url")
-        except Exception:
+                        print(f"[Cobalt Success] Resolved from {base_url}")
+                        return data["url"]
+        except Exception as e:
+            print(f"[Cobalt Warning] {base_url} error: {e}")
             continue
 
     return ""
@@ -95,12 +126,12 @@ def home_ui():
 
     <header class="w-full max-w-3xl text-center my-8">
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold mb-3">
-            <i class="fa-solid fa-bolt"></i> High-Speed Direct CDN Active
+            <i class="fa-solid fa-bolt"></i> Direct Google CDN Stream Engine
         </div>
         <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-500">
             YouTube StreamVault
         </h1>
-        <p class="text-gray-400 mt-2 text-sm">Download 1080p, 720p, 360p & MP3 without SSL or Bot Errors</p>
+        <p class="text-gray-400 mt-2 text-sm">Download 1080p, 720p, 360p & MP3 Audio directly</p>
     </header>
 
     <main class="w-full max-w-3xl space-y-6">
@@ -123,7 +154,7 @@ def home_ui():
 
         <div id="loader" class="hidden my-8 text-center">
             <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-500 border-t-transparent"></div>
-            <p class="text-gray-400 text-xs mt-2">Fetching direct video streams...</p>
+            <p class="text-gray-400 text-xs mt-2">Fetching video information...</p>
         </div>
 
         <div id="errorAlert" class="hidden p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"></div>
@@ -141,7 +172,7 @@ def home_ui():
                         </div>
                     </div>
                     <div class="mt-6">
-                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">Download Options:</label>
+                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">Direct Download Formats:</label>
                         <div id="qualityButtons" class="flex flex-wrap gap-2"></div>
                     </div>
                 </div>
@@ -179,12 +210,11 @@ def home_ui():
                 const qContainer = document.getElementById("qualityButtons");
                 qContainer.innerHTML = "";
 
-                // Formats list
                 const formats = [
                     { label: "1080p Full HD", q: "1080", isAudio: false, icon: "fa-circle-play text-emerald-400" },
                     { label: "720p HD", q: "720", isAudio: false, icon: "fa-video text-indigo-400" },
                     { label: "360p Medium", q: "360", isAudio: false, icon: "fa-video text-blue-400" },
-                    { label: "Audio (MP3)", q: "audio", isAudio: true, icon: "fa-music text-pink-400" }
+                    { label: "Audio Only (MP3)", q: "audio", isAudio: true, icon: "fa-music text-pink-400" }
                 ];
 
                 formats.forEach(f => {
@@ -213,7 +243,7 @@ def home_ui():
 
 
 # ==========================================
-# 2. METADATA API (OFFICIAL OEMBED)
+# 2. METADATA API
 # ==========================================
 @app.get("/api/info")
 def get_video_info(url: str = Query(..., description="YouTube video URL")):
@@ -260,14 +290,12 @@ def download_stream(
 ):
     try:
         video_id = extract_video_id(url)
-        clean_target_url = f"https://www.youtube.com/watch?v={video_id}"
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Resolve direct stream URL from Cobalt Cluster
-    download_url = resolve_cobalt_download(clean_target_url, quality=quality, is_audio=audio)
+    stream_url = resolve_stream_url(video_id, quality=quality, is_audio=audio)
 
-    if download_url:
-        return RedirectResponse(url=download_url)
+    if stream_url:
+        return RedirectResponse(url=stream_url)
 
-    raise HTTPException(status_code=500, detail="Unable to generate direct stream link. Please retry.")
+    raise HTTPException(status_code=500, detail="Could not resolve video stream. Please retry in a moment.")
