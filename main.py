@@ -1,17 +1,31 @@
 import os
 import glob
 import re
+import shutil
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="StreamVault - Clean yt-dlp Engine", version="14.0.0")
+app = FastAPI(title="StreamVault - yt-dlp Engine", version="15.0.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
+COOKIES_SRC = "cookies.txt"
+COOKIES_WRITABLE = "/tmp/cookies.txt"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-COOKIE_FILE = "cookies.txt"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
+
+def get_cookie_file():
+    """Read-only cookies.txt ko /tmp writable directory me copy karta hai."""
+    if os.path.exists(COOKIES_SRC):
+        try:
+            shutil.copy(COOKIES_SRC, COOKIES_WRITABLE)
+            return COOKIES_WRITABLE
+        except Exception as e:
+            print(f"[Cookie Warning] Failed to copy to /tmp: {e}")
+            return COOKIES_SRC
+    return None
 
 
 def clean_url(url: str):
@@ -64,7 +78,6 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # Disable any oauth plugins
         'compat_opts': ['no-youtube-prefer-oauth'],
         'http_headers': {'User-Agent': USER_AGENT},
         'extractor_args': {
@@ -74,9 +87,10 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
         }
     }
 
-    # Pass cookies.txt from project root
-    if os.path.exists(COOKIE_FILE):
-        opts['cookiefile'] = COOKIE_FILE
+    # Writable cookies path
+    cookie_path = get_cookie_file()
+    if cookie_path and os.path.exists(cookie_path):
+        opts['cookiefile'] = cookie_path
 
     if download:
         outtmpl_format = os.path.join(DOWNLOADS_DIR, f"{video_id}_%(resolution)s.%(ext)s")
@@ -107,8 +121,9 @@ def get_base_ydl_opts(download: bool = False, quality: str = "best", video_id: s
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def home_ui():
-    cookie_status = "Active (cookies.txt loaded)" if os.path.exists(COOKIE_FILE) else "Missing cookies.txt"
-    badge_color = "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" if os.path.exists(COOKIE_FILE) else "bg-amber-500/10 border-amber-500/20 text-amber-400"
+    cookie_loaded = os.path.exists(COOKIES_SRC)
+    cookie_status = "Active (/tmp/cookies.txt ready)" if cookie_loaded else "Missing cookies.txt"
+    badge_color = "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" if cookie_loaded else "bg-amber-500/10 border-amber-500/20 text-amber-400"
 
     return f"""
 <!DOCTYPE html>
