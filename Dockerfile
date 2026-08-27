@@ -1,14 +1,6 @@
 FROM python:3.11-slim
 
-# Install NodeJS and ffmpeg
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs npm && \
-    rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
-
-COPY package.json .
-RUN npm install --production
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
