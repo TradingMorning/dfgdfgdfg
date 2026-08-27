@@ -1,13 +1,14 @@
 import os
 import glob
 import re
-import datetime
-import httpx
+import json
+import urllib.request
+import urllib.error
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="StreamVault - Debug & Download Engine", version="3.5.0")
+app = FastAPI(title="StreamVault - Live Diagnostic Engine", version="3.6.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
 COOKIES_FILE = "/tmp/cookies.txt"
@@ -18,24 +19,22 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 # COOKIE VALIDATION & REPAIR ENGINE
 # ==========================================
 def inspect_and_write_cookies() -> dict:
-    """
-    Render ke Environment se cookies read karke fix karta hai aur detailed stats deta hai.
-    """
     raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
     
     if not raw_cookies and os.path.exists("cookies.txt"):
-        with open("cookies.txt", "r", encoding="utf-8") as f:
-            raw_cookies = f.read().strip()
+        try:
+            with open("cookies.txt", "r", encoding="utf-8") as f:
+                raw_cookies = f.read().strip()
+        except Exception:
+            pass
 
     if not raw_cookies:
-        return {"loaded": False, "reason": "No YOUTUBE_COOKIES found in Environment or local cookies.txt", "lines": 0}
+        return {"loaded": False, "reason": "No YOUTUBE_COOKIES found in Environment", "lines": 0}
 
-    # Render escaped newlines ko actual newlines me convert karna
+    # Render escaped newlines ko real linebreaks me convert karna
     raw_cookies = raw_cookies.replace("\\n", "\n").replace("\\t", "\t")
-
     lines = [line.strip() for line in raw_cookies.splitlines() if line.strip()]
     
-    # Netscape Header ensure karna
     content_lines = []
     if not any("Netscape" in line for line in lines[:3]):
         content_lines.append("# Netscape HTTP Cookie File")
@@ -49,8 +48,11 @@ def inspect_and_write_cookies() -> dict:
 
     fixed_cookie_data = "\n".join(content_lines) + "\n"
     
-    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
-        f.write(fixed_cookie_data)
+    try:
+        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+            f.write(fixed_cookie_data)
+    except Exception as e:
+        return {"loaded": False, "reason": f"Failed to write cookie file: {str(e)}", "lines": 0}
 
     return {
         "loaded": True,
@@ -61,7 +63,7 @@ def inspect_and_write_cookies() -> dict:
     }
 
 
-def clean_url(url: str) -> str:
+def clean_url(url: str):
     url = url.strip()
     match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?\s]{11})', url)
     if match:
@@ -119,7 +121,6 @@ def home_ui():
 </head>
 <body class="bg-[#080c14] text-gray-100 min-h-screen flex flex-col items-center justify-start p-4 sm:p-6">
 
-    <!-- Header -->
     <header class="w-full max-w-4xl text-center my-6">
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold mb-3">
             <i class="fa-solid fa-terminal"></i> Live Cloud Diagnostic Console
@@ -130,44 +131,41 @@ def home_ui():
     </header>
 
     <main class="w-full max-w-4xl space-y-6">
-        <!-- Input Box -->
         <div class="glass-panel p-3 rounded-2xl shadow-xl flex flex-col sm:flex-row gap-2">
             <div class="relative flex-grow flex items-center">
                 <i class="fa-brands fa-youtube text-red-500 absolute left-4 text-xl"></i>
                 <input 
                     type="text" 
                     id="videoUrl" 
-                    placeholder="Paste YouTube link here..."
+                    placeholder="Paste YouTube video link here..."
                     class="w-full bg-[#101623] text-white pl-12 pr-4 py-3.5 rounded-xl border border-gray-800 focus:outline-none focus:border-indigo-500 transition text-sm"
                 />
             </div>
             <button 
                 onclick="runDiagnosticFetch()" 
                 id="fetchBtn"
-                class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3.5 rounded-xl font-bold transition flex items-center justify-center gap-2 text-sm whitespace-nowrap"
+                class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3.5 rounded-xl font-bold transition flex items-center justify-center gap-2 text-sm whitespace-nowrap shadow-lg shadow-indigo-600/30"
             >
                 <i class="fa-solid fa-play"></i>
                 <span>Fetch & Diagnose</span>
             </button>
         </div>
 
-        <!-- Live Terminal Logs Console -->
         <div class="glass-panel rounded-2xl p-4 border border-gray-800 shadow-2xl">
             <div class="flex items-center justify-between pb-3 border-b border-gray-800 text-xs">
                 <div class="flex items-center gap-2">
                     <span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>
                     <span class="w-3 h-3 rounded-full bg-yellow-500 inline-block"></span>
                     <span class="w-3 h-3 rounded-full bg-green-500 inline-block"></span>
-                    <span class="text-gray-400 font-mono font-bold ml-2">LIVE CLOUD EXECUTION LOGS</span>
+                    <span class="text-gray-400 font-mono font-bold ml-2">LIVE CLOUD LOGS</span>
                 </div>
                 <span id="logStatusBadge" class="text-gray-500 font-mono">READY</span>
             </div>
             <div id="terminalLogs" class="font-mono text-xs text-gray-300 mt-3 h-44 overflow-y-auto space-y-1.5 custom-scroll p-2 bg-[#0a0e17] rounded-xl border border-gray-900">
-                <p class="text-gray-600">// Waiting for URL input... Live events will appear here in real-time.</p>
+                <p class="text-gray-600">// Waiting for URL input... Events will stream here in real-time.</p>
             </div>
         </div>
 
-        <!-- Video Result Display -->
         <div id="detailsCard" class="hidden glass-panel p-6 rounded-2xl border border-gray-800 shadow-2xl">
             <div class="flex flex-col md:flex-row gap-6">
                 <div class="relative rounded-xl overflow-hidden md:w-5/12 flex-shrink-0 bg-black/50">
@@ -234,7 +232,6 @@ def home_ui():
                 const response = await fetch(`/api/info?url=${encodeURIComponent(urlInput)}`);
                 const result = await response.json();
 
-                // Backend se jo logs aaye unhe terminal me render karna
                 if (result.logs && Array.isArray(result.logs)) {
                     result.logs.forEach(l => addLog(l.message, l.type));
                 }
@@ -249,7 +246,6 @@ def home_ui():
                 badge.innerText = "SUCCESS";
                 badge.className = "text-emerald-400 font-mono";
 
-                // Populate Card
                 document.getElementById("videoTitle").innerText = result.data.title;
                 document.getElementById("videoThumb").src = result.data.thumbnail;
                 document.getElementById("videoUploader").innerText = result.data.uploader;
@@ -262,15 +258,14 @@ def home_ui():
                 // Best Quality Button
                 const bestBtn = document.createElement("a");
                 bestBtn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=best`;
-                bestBtn.className = "px-3.5 py-2 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500 text-xs font-semibold flex items-center gap-2 text-white";
+                bestBtn.className = "px-3.5 py-2 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 border border-indigo-500 text-xs font-semibold flex items-center gap-2 text-white transition";
                 bestBtn.innerHTML = `<i class="fa-solid fa-star text-yellow-400"></i> Best Quality (Auto MP4)`;
                 qContainer.appendChild(bestBtn);
 
-                // Other formats
                 result.data.available_resolutions.forEach(res => {
                     const btn = document.createElement("a");
                     btn.href = `/api/download?url=${encodeURIComponent(urlInput)}&quality=${res}`;
-                    btn.className = "px-3.5 py-2 rounded-lg bg-[#182032] hover:bg-gray-800 border border-gray-700 text-xs font-medium flex items-center gap-2 text-gray-200";
+                    btn.className = "px-3.5 py-2 rounded-lg bg-[#182032] hover:bg-gray-800 border border-gray-700 text-xs font-medium flex items-center gap-2 text-gray-200 transition";
                     btn.innerHTML = `<i class="fa-solid fa-video text-indigo-400"></i> ${res}`;
                     qContainer.appendChild(btn);
                 });
@@ -299,26 +294,25 @@ def home_ui():
 # 2. DIAGNOSTIC API WITH LIVE LOGS
 # ==========================================
 @app.get("/api/info")
-async def get_video_info(url: str = Query(..., description="YouTube video URL")):
+def get_video_info(url: str = Query(..., description="YouTube video URL")):
     logs = []
     
     clean_target_url, video_id = clean_url(url)
     logs.append({"type": "info", "message": f"Cleaned Video ID: <b>{video_id}</b>"})
 
-    # 1. Cookie Status Check
+    # Cookie Verification
     cookie_stats = inspect_and_write_cookies()
     if cookie_stats["loaded"]:
         logs.append({
             "type": "cookie", 
-            "message": f"Cookie loaded: <b>{cookie_stats['valid_cookies']} valid entries</b> parsed from Environment ({cookie_stats['file_size']} bytes)."
+            "message": f"Cookie loaded: <b>{cookie_stats['valid_cookies']} valid entries</b> parsed ({cookie_stats['file_size']} bytes)."
         })
     else:
         logs.append({
             "type": "warn", 
-            "message": f"Cookie status: {cookie_stats['reason']} (Attempting unauthenticated fallback)."
+            "message": f"Cookie status: {cookie_stats['reason']} (Attempting unauthenticated request)."
         })
 
-    # 2. Attempt Extraction via yt-dlp
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -349,7 +343,7 @@ async def get_video_info(url: str = Query(..., description="YouTube video URL"))
                 reverse=True
             )
 
-            logs.append({"type": "success", "message": f"Metadata successfully extracted: '{info.get('title')}'"})
+            logs.append({"type": "success", "message": f"Metadata extracted: '{info.get('title')}'"})
 
             return JSONResponse(content={
                 "status": "success",
@@ -369,23 +363,23 @@ async def get_video_info(url: str = Query(..., description="YouTube video URL"))
 
     except Exception as yt_err:
         err_msg = str(yt_err)
-        logs.append({"type": "error", "message": f"yt-dlp error: {err_msg[:120]}..."})
+        logs.append({"type": "error", "message": f"yt-dlp failed: {err_msg[:120]}..."})
+        logs.append({"type": "warn", "message": "Failing over to mirror resolvers..."})
         
-        # 3. Automatic Failover to Decentralized Resolver
-        logs.append({"type": "warn", "message": "Triggering automatic mirror resolver fallback..."})
+        # Standard urllib fallback
+        resolvers = [
+            f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
+            f"https://inv.tux.pizza/api/v1/videos/{video_id}",
+            f"https://yt.artemislena.eu/api/v1/videos/{video_id}"
+        ]
         
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resolvers = [
-                f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
-                f"https://inv.tux.pizza/api/v1/videos/{video_id}",
-                f"https://yt.artemislena.eu/api/v1/videos/{video_id}"
-            ]
-            for r_url in resolvers:
-                try:
-                    resp = await client.get(r_url)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        logs.append({"type": "success", "message": f"Mirror resolved stream details successfully!"})
+        for r_url in resolvers:
+            try:
+                req = urllib.request.Request(r_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5.0) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read().decode('utf-8'))
+                        logs.append({"type": "success", "message": "Mirror resolved stream details successfully!"})
                         return JSONResponse(content={
                             "status": "success",
                             "logs": logs,
@@ -401,15 +395,15 @@ async def get_video_info(url: str = Query(..., description="YouTube video URL"))
                                 "available_resolutions": ["1080p", "720p", "480p", "360p"]
                             }
                         })
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
         return JSONResponse(
             status_code=400,
             content={
                 "status": "error",
                 "logs": logs,
-                "detail": "Failed on both yt-dlp and mirror resolvers. Check cookies or try another URL."
+                "detail": "Failed on both yt-dlp and mirror resolvers. Verify cookie or try another URL."
             }
         )
 
