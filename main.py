@@ -1,17 +1,42 @@
-import os 
+import os
 import glob
+import re
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import yt_dlp
 
-app = FastAPI(title="YouTube Downloader & Info API", version="2.0.0")
+app = FastAPI(title="YouTube Downloader & Info API", version="2.1.0")
 
 DOWNLOADS_DIR = "/tmp/downloads"
+COOKIES_FILE = "/tmp/cookies.txt"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+# Render Environment Variable se cookies.txt automatically generate karna
+def setup_cookies():
+    raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
+    if raw_cookies:
+        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+            f.write(raw_cookies)
+        print("[Setup] YouTube cookies successfully loaded from Environment!")
+        return COOKIES_FILE
+    elif os.path.exists("cookies.txt"):
+        return "cookies.txt"
+    return None
+
+COOKIE_PATH = setup_cookies()
+
+
+def clean_url(url: str) -> str:
+    """Tracking parameters like '?si=...' ko remove karke clean YouTube URL banata hai."""
+    url = url.strip()
+    # Handle youtu.be/ID format
+    match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?]*).*', url)
+    if match and len(match.group(1)) == 11:
+        return f"https://www.youtube.com/watch?v={match.group(1)}"
+    return url
 
 
 def cleanup_file(filepath: str):
-    """File user ko send hone ke baad delete karta hai taaki server storage clean rahe."""
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
@@ -40,8 +65,23 @@ def format_duration(seconds):
     return f"{m:02d}:{s:02d}"
 
 
+def get_base_ydl_opts():
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'mweb', 'web_creator', 'tv_embedded']
+            }
+        }
+    }
+    if COOKIE_PATH and os.path.exists(COOKIE_PATH):
+        opts['cookiefile'] = COOKIE_PATH
+    return opts
+
+
 # ==========================================
-# 1. EMBEDDED MODERN UI (HOME PAGE)
+# 1. EMBEDDED MODERN UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def home_ui():
@@ -51,10 +91,8 @@ def home_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StreamVault - Modern YouTube Downloader</title>
-    <!-- Tailwind CSS CDN -->
+    <title>StreamVault - YouTube Downloader</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -77,22 +115,19 @@ def home_ui():
 </head>
 <body class="bg-[#0b0f19] text-gray-100 min-h-screen flex flex-col items-center justify-start p-4 sm:p-8">
 
-    <!-- Header -->
     <header class="w-full max-w-4xl text-center my-8">
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-sm font-medium mb-4">
-            <i class="fa-solid fa-bolt"></i> High-Speed Cloud Server Engine
+            <i class="fa-solid fa-shield-halved"></i> Multi-Client Cloud Engine
         </div>
         <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight">
             YouTube <span class="gradient-text">StreamVault</span>
         </h1>
         <p class="text-gray-400 mt-3 text-sm sm:text-base max-w-lg mx-auto">
-            Extract high-definition video details & download MP4 in 4K, 1080p, 720p or MP3 without speed throttling.
+            Extract HD video details & download MP4 in 1080p, 720p or MP3 without bot-blocks.
         </p>
     </header>
 
-    <!-- Main Card -->
     <main class="w-full max-w-3xl">
-        <!-- Input Form -->
         <div class="glass-panel p-3 sm:p-4 rounded-2xl shadow-2xl flex flex-col sm:flex-row gap-2">
             <div class="relative flex-grow flex items-center">
                 <i class="fa-brands fa-youtube text-red-500 absolute left-4 text-xl"></i>
@@ -113,28 +148,23 @@ def home_ui():
             </button>
         </div>
 
-        <!-- Loader Spinner -->
         <div id="loader" class="hidden my-12 text-center">
             <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-indigo-500 border-t-transparent"></div>
             <p class="text-gray-400 text-sm mt-3 animate-pulse">Extracting metadata from YouTube servers...</p>
         </div>
 
-        <!-- Error Alert -->
         <div id="errorAlert" class="hidden mt-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-3">
-            <i class="fa-solid fa-circle-exclamation text-lg"></i>
-            <span id="errorMessage">Failed to fetch video details. Please check the URL.</span>
+            <i class="fa-solid fa-circle-exclamation text-lg flex-shrink-0"></i>
+            <span id="errorMessage">Failed to fetch video details.</span>
         </div>
 
-        <!-- Video Details Card (Hidden by default) -->
         <div id="detailsCard" class="hidden mt-8 glass-panel p-6 rounded-2xl border border-gray-800 shadow-2xl">
             <div class="flex flex-col md:flex-row gap-6">
-                <!-- Thumbnail with Duration -->
                 <div class="relative rounded-xl overflow-hidden md:w-5/12 flex-shrink-0 bg-black/40">
                     <img id="videoThumb" src="" alt="Thumbnail" class="w-full h-full object-cover rounded-xl" />
                     <span id="videoDuration" class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 text-xs font-semibold rounded text-white"></span>
                 </div>
 
-                <!-- Info Column -->
                 <div class="flex-grow flex flex-col justify-between">
                     <div>
                         <h2 id="videoTitle" class="text-lg sm:text-xl font-bold leading-snug line-clamp-2 text-white"></h2>
@@ -144,19 +174,15 @@ def home_ui():
                         </div>
                     </div>
 
-                    <!-- Quality / Download Options -->
                     <div class="mt-6">
                         <label class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 block">
                             Select Quality to Download:
                         </label>
-                        <div id="qualityButtons" class="flex flex-wrap gap-2">
-                            <!-- Dynamic Quality Buttons injected here -->
-                        </div>
+                        <div id="qualityButtons" class="flex flex-wrap gap-2"></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Download Status Banner -->
             <div id="downloadStatus" class="hidden mt-6 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-sm flex items-center justify-between">
                 <div class="flex items-center gap-2.5">
                     <i class="fa-solid fa-arrow-down animate-bounce"></i>
@@ -167,12 +193,10 @@ def home_ui():
         </div>
     </main>
 
-    <!-- Footer -->
     <footer class="mt-auto py-8 text-center text-xs text-gray-600">
-        <p>Built with FastAPI & yt-dlp • Designed for Cloud Deployment</p>
+        <p>Built with FastAPI & yt-dlp • Cloud Server Optimized</p>
     </footer>
 
-    <!-- Script Logic -->
     <script>
         let currentVideoUrl = "";
 
@@ -188,7 +212,6 @@ def home_ui():
                 return;
             }
 
-            // UI Reset
             errorAlert.classList.add("hidden");
             detailsCard.classList.add("hidden");
             loader.classList.remove("hidden");
@@ -205,26 +228,21 @@ def home_ui():
                     throw new Error(data.detail || "Unable to extract video information.");
                 }
 
-                // Populate Data
                 document.getElementById("videoTitle").innerText = data.title;
                 document.getElementById("videoThumb").src = data.thumbnail;
                 document.getElementById("videoUploader").innerText = data.uploader || "Unknown";
                 document.getElementById("videoViews").innerText = data.views_formatted;
                 document.getElementById("videoDuration").innerText = data.duration_formatted;
 
-                // Render Quality Buttons
                 const container = document.getElementById("qualityButtons");
                 container.innerHTML = "";
 
-                // Best Quality Button
                 addQualityButton(container, "Best Quality (Auto)", "best", "fa-star text-yellow-400");
 
-                // Specific Resolutions
                 data.available_resolutions.forEach(res => {
                     addQualityButton(container, res, res, "fa-video text-indigo-400");
                 });
 
-                // Audio Only Button
                 addQualityButton(container, "Audio Only", "audio", "fa-music text-pink-400");
 
                 detailsCard.classList.remove("hidden");
@@ -251,8 +269,6 @@ def home_ui():
             downloadStatus.classList.remove("hidden");
 
             const downloadUrl = `/api/download?url=${encodeURIComponent(currentVideoUrl)}&quality=${quality}`;
-            
-            // Trigger direct file download in browser
             window.location.href = downloadUrl;
 
             setTimeout(() => {
@@ -266,7 +282,6 @@ def home_ui():
             errorAlert.classList.remove("hidden");
         }
 
-        // Enter Key Listener
         document.getElementById("videoUrl").addEventListener("keypress", function(event) {
             if (event.key === "Enter") {
                 event.preventDefault();
@@ -280,24 +295,17 @@ def home_ui():
 
 
 # ==========================================
-# 2. METADATA API ENDPOINT
+# 2. METADATA API
 # ==========================================
 @app.get("/api/info")
 def get_video_info(url: str = Query(..., description="YouTube video URL")):
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embedded', 'ios', 'android', 'web']
-            }
-        }
-    }
+    target_url = clean_url(url)
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts['skip_download'] = True
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(target_url, download=False)
 
             formats = info.get('formats', [])
             resolutions = set()
@@ -329,7 +337,7 @@ def get_video_info(url: str = Query(..., description="YouTube video URL")):
 
 
 # ==========================================
-# 3. DOWNLOAD & STREAM ENDPOINT
+# 3. DOWNLOAD & STREAM
 # ==========================================
 @app.get("/api/download")
 def download_video(
@@ -337,6 +345,7 @@ def download_video(
     url: str = Query(..., description="YouTube video URL"),
     quality: str = Query("best", description="Quality: 'best', '1080p', '720p', 'audio'")
 ):
+    target_url = clean_url(url)
     outtmpl_format = os.path.join(DOWNLOADS_DIR, "%(id)s_%(resolution)s.%(ext)s")
 
     if quality == "audio":
@@ -353,22 +362,17 @@ def download_video(
         merge_fmt = "mp4"
         media_type = "video/mp4"
 
-    ydl_opts = {
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts.update({
         'format': format_str,
         'outtmpl': outtmpl_format,
         'merge_output_format': merge_fmt,
         'noplaylist': True,
-        'no_warnings': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embedded', 'ios', 'android', 'web']
-            }
-        }
-    }
+    })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(target_url, download=True)
             video_id = info.get("id")
             raw_title = info.get("title", "video")
             safe_title = "".join(c for c in raw_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
@@ -380,7 +384,6 @@ def download_video(
             downloaded_file = matched_files[0]
             extension = downloaded_file.split(".")[-1]
 
-            # Background cleanup to free disk space
             background_tasks.add_task(cleanup_file, downloaded_file)
 
             return FileResponse(
